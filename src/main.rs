@@ -19,8 +19,8 @@ use web3::Web3;
 #[allow(unused_imports)]
 use web3::transports::Http;
 
-async fn main() -> Result<()> {
-    let untrusted_rpc_url = env::var("private_rpc")?;
+async fn rpc_main() -> Result<()> {
+    let untrusted_rpc_url = env::var("https://alien-thrumming-meadow.quiknode.pro/5ddd6a41237ea54fa2e2322d4ea1f23fef4d4dd9/")?;
 
     let mut client = ClientBuilder::new()
         .network(Network::MAINNET)
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
 
     client.start().await?;
 
+    let addr = Address::from_str("addy")?;
     let head_block_num = client.get_block_number().await?;
     let block = BlockTag::Latest;
     let balance = client.get_balance(&addr, block).await?;
@@ -43,10 +44,10 @@ async fn main() -> Result<()> {
 
 
 
-async fn event_emitted(rpc: &rpc, filter:Filter) -> Result<()> {
+async fn event_emitted(rpc: &Rpc, filter:Filter) -> Result<()> {
     let logs = rpc.get_logs(filter).await?;
     let filter = FilterBuilder::default()
-    .address(vec![contract_address])
+    .address(vec![addr])
     .topics(Some(vec![event_signature]), None, None, None)
     .build();
     for log in logs {
