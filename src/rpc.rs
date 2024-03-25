@@ -13,23 +13,20 @@ use helios::{ClientBuilder,Network};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;
-
-    // Assuming `ClientBuilder` is part of the used Ethereum library and properly set up
+    let untrusted_rpc_url = env::var("private rpc endpoint")?;
     let client = ClientBuilder::new().rpc(&untrusted_rpc_url).build()?;
 
     let head_block_num = client.get_block_number().await?;
-    let addr = Address::from_str("0x00000000219ab540356cBB839Cbe05303d7705Fa")?;
+    let addr = Address::from_str("your address")?;
     let balance = client.get_balance(addr, None).await?;
 
-    // Example for setting up a filter and listening to logs
     let event_signature = H256::from_slice(&keccak256("EventName(type1,type2)"));
     let filter = Filter::default()
         .address(vec![addr])
         .topics(Some(vec![event_signature]), None, None, None)
         .build();
 
-    // This is a simplified logic to fetch logs
+    // fetching logs with ethers and helios
     let mut client = ClientBuilder::new()
         .network(Network::MAINNET)
         .consensus_rpc("https://www.lightclientdata.org")
