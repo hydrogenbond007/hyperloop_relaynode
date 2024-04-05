@@ -1,3 +1,7 @@
+use config::File;
+use ethers::core::k256::{ecdsa::signature::Keypair, elliptic_curve::scalar};
+use schnorr_fun::Schnorr;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;
@@ -10,7 +14,9 @@ use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::str::FromStr;
+use std::path::Path;
 use std::error::Error;
+use sha256::{digest, try_digest};
 use ethers::utils::keccak256;
 use helios::{ClientBuilder,Network};
 use schnorr_fun::{
@@ -83,6 +89,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
         Ok(())
     }
+
+    let hash_file = Path::new("event_logs.txt");
+    let hash_event = try_digest(hash_file).unwrap(); 
+    let schnorr = Schnorr::new(0);
+    let scalar_value = Scalar::random(&mut);
+    let Keypair = schnorr.new_keypair(scalar_value);
+
+    let batch_signature = schnorr.sign(&Keypair, hash_event);
+
+
+
 
     
 
