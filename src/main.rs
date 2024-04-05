@@ -6,8 +6,8 @@ use schnorr_fun::Schnorr;
 async fn main() -> Result<(), Box<dyn Error>> {
     let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;
 
-    // Assuming `ClientBuilder` is part of the used Ethereum library and properly set up
-    // Assume necessary imports are here
+    
+    // need to fix the helios imports here
 use ethers::prelude::*;
 use tokio::time::{interval,Duration};
 use std::env;
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
 
-    // This is a simplified logic to fetch logs
+    // maybe could work on this to  modif a bit more
     
     let mut event_logs: Vec<Log> = Vec::new();
     let mut interval_timer = interval(Duration::from_secs(60));
@@ -66,13 +66,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = interval_timer.tick() => {
                 // Process buffered logs
                 process_event_logs(&event_logs);
-                // Clear the buffer for the next interval
+                // clears the buffer for the next one
                 event_logs.clear();
             },
         }
     }
     async fn process_event_logs(logs: &[Log]) -> Result<(), Box<dyn Error>> {
-        // Open or create a file to append the logs
+        // saving the event logs to a file
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -81,7 +81,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .unwrap();
     
         for log in logs {
-            // Assuming .to_string() gives a desirable string representation of a Log
             if let Err(e) = writeln!(file, "{}", log.to_string()) {
                 eprintln!("Could not write log to file: {}", e);
             }
