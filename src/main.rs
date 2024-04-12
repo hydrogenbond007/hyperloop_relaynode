@@ -1,7 +1,6 @@
 use config::File;
 use ethers::core::k256::{ecdsa::signature::Keypair, elliptic_curve::scalar};
 use schnorr_fun::Schnorr;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;
@@ -77,7 +76,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .write(true)
             .create(true)
             .append(true)
-            .open("event_logs.txt")
+            .open("event_logs.json")
             .unwrap();
     
         for log in logs {
@@ -97,6 +96,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let batch_signature = schnorr.sign(&Keypair, hash_event);
 
+
+
+    // createa a txn to send data to the contract
+    let private_key = "";
+    let destination_address = "";
+    let tx = contract.method::<_, H256>("receiveData", (hash_file, batch_signature))?.send().await?;
 
 
 
