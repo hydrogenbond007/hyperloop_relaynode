@@ -93,6 +93,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let destination_address = "";
     let tx = contract.method::<_, H256>("receiveData", (hash_event, batch_signature))?.send().await?;
 
+    async fn send_data_to_contract(
+        client: Arc<SignerMiddleware<Provider<Http>, Wallet>>,
+        contract_address: &str,
+        abi_path: &str,
+        data: Vec<u8>
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let contract = Contract::from_json(client, contract_address.parse()?, include_bytes!(abi_path))?;
+        let tx = contract.method::<_, H256>("receiveData", data)?.send().await?;
+        println!("Transaction sent: {:?}", tx);
+        Ok(())
+    }
+
     }
 
     
