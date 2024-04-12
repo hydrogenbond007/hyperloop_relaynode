@@ -70,26 +70,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
         }
     }
-    async fn process_event_logs(logs: &[Log]) -> Result<(), Box<dyn Error>> {
-        // saving the event logs to a file
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open("event_logs.json")
-            .unwrap();
+    async fn process_event_logs(logs: &[Log]) -> Result<String, Box<dyn Error>> {
+        let mut event_logs_string = String::new();
     
         for log in logs {
-            if let Err(e) = writeln!(file, "{}", log.to_string()) {
-                eprintln!("Could not write log to file: {}", e);
-            }
+            event_logs_string.push_str(&log.to_string());
+            event_logs_string.push('\n'); // Add a newline after each log
         }
     
-        Ok(())
-    }
-
-    let hash_file = Path::new("event_logs.txt");
-    let hash_event = try_digest(hash_file).unwrap(); 
+        Ok(event_logs_string);
+    let hash_event = try_digest(event_logs_string);
     let schnorr = Schnorr::new(0);
     let scalar_value = Scalar::random(&mut);
     let Keypair = schnorr.new_keypair(scalar_value);
@@ -101,9 +91,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // createa a txn to send data to the contract
     let private_key = "";
     let destination_address = "";
-    let tx = contract.method::<_, H256>("receiveData", (hash_file, batch_signature))?.send().await?;
+    let tx = contract.method::<_, H256>("receiveData", (hash_event, batch_signature))?.send().await?;
 
-
+    }
 
     
 
