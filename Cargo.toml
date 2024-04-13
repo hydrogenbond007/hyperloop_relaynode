@@ -7,12 +7,14 @@ edition = "2021"
 
 [dependencies]
 config = "0.14.0"
-ethers = "2.0.14"
 eyre = "0.6.12"
-helios = "0.1.0"
 tokio = "1.36.0"
-web3 = "0.19.0"
 futures = "0.3.30"
+#ethers = "2.0.14"
+ethers = { git = "https://github.com/gakonst/ethers-rs", rev = "3bf1a9e0d698e9fdfc91d0353878901af5a5c5ef" }
+helios = { path = "../helios"}
+web3 = "0.19.0"
 schnorr_fun = "0.10.0"
 sha256 = "1.5.0"
 sha2 = "0.10.8"
+serde_json = "1.0"
