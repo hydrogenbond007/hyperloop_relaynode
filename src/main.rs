@@ -8,6 +8,8 @@ use std::path::Path;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
+use ed25519_dalek::{Signer, Verifier, Signature};
+use rand::rngs::OsRng;
 
 use helios::prelude::*;
 use helios::{client::ClientBuilder, config::networks::Network, client::Client};
@@ -137,11 +139,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         //Ok(event_logs_string)
 /* 
         let hash_event = try_digest(event_logs_string);
-        let schnorr = Schnorr::new(0);
-        let scalar_value = Scalar::random(&mut);
-        let Keypair = schnorr.new_keypair(scalar_value);
-
-        let batch_signature = schnorr.sign(&Keypair, hash_event);
+        let mut csprng = OsRng {};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+        let signature: Signature = keypair.sign(&hash_event);
 
    
         // createa a txn to send data to the contract
