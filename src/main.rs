@@ -136,8 +136,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             event_logs_string.push('\n'); // Add a newline after each log
         }
     
-        //Ok(event_logs_string)
-/* 
+        Ok(event_logs_string)
+
         let hash_event = try_digest(event_logs_string);
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
