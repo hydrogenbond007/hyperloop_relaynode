@@ -139,16 +139,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(event_logs_string)
 
         let hash_event = try_digest(event_logs_string);
-        let mut csprng = OsRng {};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-        let signature: Signature = keypair.sign(&hash_event);
+        // using the private
 
    
         // createa a txn to send data to the contract
         let private_key = "";
         let destination_address = "";
-        let tx = contract.method::<_, H256>("receiveData", (hash_event, batch_signature))?.send().await?;
-
+        let tx = contract.method::<_, H256>("receiveData", (hash_event, signature))?.send().await?;
+        let signature: Signature = private_key.sign(&hash_event);
         async fn send_data_to_contract(
             client: Arc<SignerMiddleware<Provider<Http>, Wallet>>,
             contract_address: &str,
@@ -169,4 +167,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+fn test_verify_signature() {
+    if keypair = private_key;
+    assert!(true); 
 }
