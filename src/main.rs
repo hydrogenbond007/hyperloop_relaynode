@@ -11,8 +11,12 @@ use std::io::Write;
 use ed25519_dalek::{Signer, Verifier, Signature};
 use rand::rngs::OsRng;
 
-use helios::prelude::*;
-use helios::{client::ClientBuilder, config::networks::Network, client::Client};
+//use helios::prelude::*;
+//use helios::{client::ClientBuilder, config::networks::Network, client::Client};
+use web3::{
+    types::{Address, Bytes},
+    Web3, Transport, Http,
+};
 
 use ethers::prelude::*;
 use ethers::prelude::{Address, U256};
@@ -61,11 +65,12 @@ async fn execute_message(client: &EthClient, contract_addr: &H160, signer: [u8; 
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> web3::Result<()> {
+    
     // --- TRANSACTION RELATED CODE ---
 
     let chain_id: u64 = 31337;
-    let rpc_url = format!("http://127.0.0.1:8545");
+    //let rpc_url = format!("http://127.0.0.1:8545");
 
     let private_key = "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a";
     let contract_address = "0x9CB7a24C844afd220f05EB1359691E6A4DB80e3a".parse::<Address>()?;
@@ -74,26 +79,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sig: Bytes = "0xCA69906813B443FAC1D047DA4E73472DA34B873D2B8C6698C185859F3DDB860C8C5E871FDA0510C9B37ADA883B85ED09B42A141817C4652B3AB4A67D2D8C1708".parse::<Bytes>()?;
     let txn: Bytes = "0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000002b5ad5c4795c026514f8317c7a215e218dccd6cf0000000000000000000000000000000000000000000000000de0b6b3a764000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000002b5ad5c4795c026514f8317c7a215e218dccd6cf00000000000000000000000000000000000000000000000000000000000f4240".parse::<Bytes>()?;
 
-    let provider = Provider::<Http>::try_from(rpc_url.as_str())?;
-    let wallet: LocalWallet = private_key.parse::<LocalWallet>()?.with_chain_id(chain_id);
-    let client = SignerMiddleware::new(provider.clone(), wallet.clone());
+    //let provider = Provider::<Http>::try_from(rpc_url.as_str())?;
+    //let wallet: LocalWallet = private_key.parse::<LocalWallet>()?.with_chain_id(chain_id);
+    //let client = SignerMiddleware::new(provider.clone(), wallet.clone());
 
     // --------------------------------
 
-    //let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;
-    let untrusted_rpc_url = "http://128.0.0.16";
-    let addr = Address::from_str("0x00000000219ab540356cBB839Cbe05303d7705Fa")?;
+    //let untrusted_rpc_url = env::var("UNTRUSTED_RPC_URL")?;*/
+    let rpc_url = "http://128.0.0.16";
+    let http = Http::new(rpc_url)?;
+    let web3 = Web3::new(http);
+    let addr = Address::from_str("bridge smart contract")?;
 
     // Assuming `ClientBuilder` is part of the used Ethereum library and properly set up
     // ^^ client variable type was unknown so specified to Client<ConfigDB> (not sure if that is right) + need to set the arguments properly
-    let mut client: Client<ConfigDB>= ClientBuilder::new()
+    /*let mut client: Client<ConfigDB>= ClientBuilder::new()
         .network(Network::GOERLI)
         .consensus_rpc("https://www.lightclientdata.org")
         .execution_rpc(&untrusted_rpc_url)
         .build()?;
 
     let head_block_num = client.get_block_number().await?;
-    //let balance = client.get_balance(&addr, None).await?;
+    //let balance = client.get_balance(&addr, None).await?;*/
 
     // Example for setting up a filter and listening to logs
     let event_signature = H256::from_slice(&keccak256("EventName(type1,type2)"));
