@@ -1,5 +1,10 @@
 [
     {
+      "type": "constructor",
+      "inputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
       "type": "function",
       "name": "WINDOW_DEPOSIT_LIMIT",
       "inputs": [],
@@ -47,6 +52,80 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getMessageBytes",
+      "inputs": [
+        {
+          "name": "_message",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "msgBytes",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "getTransactionBytes",
+      "inputs": [
+        {
+          "name": "_actionId",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "_to",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "_amount",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "transBytes",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "sendFunds",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "payable"
     },
     {
       "type": "function",
@@ -147,6 +226,19 @@
       "stateMutability": "nonpayable"
     },
     {
+      "type": "function",
+      "name": "withdrawFunds",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
       "type": "event",
       "name": "BridgeTransfer",
       "inputs": [
@@ -158,6 +250,12 @@
         },
         {
           "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "timestamp",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
