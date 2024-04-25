@@ -1,11 +1,13 @@
+use dotenv::dotenv;
+use std::env;
+use std::sync::Arc;
+use regex::Regex;
+use hex::FromHex;
 use web3::futures::StreamExt;
 use web3::types::{FilterBuilder, Log};
 use web3::transports::WebSocket;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Http};
-use std::sync::Arc;
-use hex::{FromHex, encode};
-use regex::Regex;
 mod ed25519;
 
 type Client = SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>;
@@ -17,30 +19,19 @@ abigen!(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let private_key = "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a";
+    dotenv().ok();
 
-    let chain_id: u64 = 31337;
-    let dest_rpc_url = format!("http://127.0.0.1:8545");
-    let dest_contract_address = "0x98eDDadCfde04dC22a0e62119617e74a6Bc77313".parse::<Address>()?;
+    let chain_id: u64 = env::var("DEST_CHAIN_ID")?.parse::<u64>().expect("Invalid conversion to u64");
+    let dest_contract_address = env::var("DEST_CONTRACT_ADDR")?.parse::<Address>()?;
 
-    let provider = Provider::<Http>::try_from(dest_rpc_url.as_str())?;
-    let wallet: Wallet<k256::ecdsa::SigningKey> = private_key.parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
+    let provider = Provider::<Http>::try_from(env::var("DEST_RPC_URL")?.as_str())?;
+    let wallet: Wallet<k256::ecdsa::SigningKey> = env::var("PRIVATE_KEY")?.parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
     let client = SignerMiddleware::new(provider.clone(), wallet.clone());
-
-    // --------------------------------------------------------------------------------------------
-
-    let private_key_hex = "B583220215144D856030DCA19F5F800B6908F1F3E0D9168E1D3FFA73017FB2CA";
-    let public_key_hex = "292C70EBBBD20F278DB008B93A76D39AD5D87299883E59BC2CD5900F2EB849C2";
-
-    let private_key_bytes = Vec::from_hex(private_key_hex).expect("Invalid private key hex string");
-    let private_key_array: [u8; 32] = private_key_bytes.as_slice().try_into().unwrap();
-
-    // --------------------------------------------------------------------------------------------
 
     let mut log_bytes: Vec<Bytes> = vec![];
 
-    let source_rpc_url = "ws://127.0.0.1:8545";
-    let source_contract_address = "0x95bD8D42f30351685e96C62EDdc0d0613bf9a87A";
+    let source_rpc_url = env::var("SOURCE_RPC_URL")?;
+    let source_contract_address = env::var("SOURCE_CONTRACT_ADDR")?;
     let transport = WebSocket::new(&source_rpc_url).await?;
     let web3 = web3::Web3::new(transport);
 
@@ -86,17 +77,19 @@ async fn process_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<
     let msg = get_message_bytes(client, contract_addr, log_bytes).await?;
 
     // ^^ Sign the message
-    let private_key_hex = "B583220215144D856030DCA19F5F800B6908F1F3E0D9168E1D3FFA73017FB2CA";
-    let sig = ed25519::sign_message(private_key_hex, &msg)?;
-    println!("Sig: {}", sig);
+    let private_key_hex = env::var("PRIVATE_KEY")?;
+    let public_key_hex = env::var("PUBLIC_KEY")?;
+    let sig = ed25519::sign_message(private_key_hex.as_str(), &msg)?;
+    println!("SIG: {}", sig);
 
     // ^^ send to bridge node
+    execute_message(client, contract_addr, public_key_hex.as_str(), sig, msg).await?;
 
     Ok(())
 }
 
 async fn get_transaction_bytes(client: &Client, contract_addr: &H160, action_id: Bytes, to: Bytes, amount: Bytes, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Topics: {}, {}, {}", action_id, to, amount);
+    println!("TOPICS: {}, {}, {}", action_id, to, amount);
     
     let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
     let result = contract.get_transaction_bytes(action_id, to, amount).call().await?;
@@ -110,7 +103,38 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
     let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
     let result = contract.get_message_bytes(log_bytes.to_vec()).call().await?;
 
-    println!("Msg Bytes: {:?}", result);
+    println!("MSG BYTES: {:?}", result);
+    log_bytes.clear();
 
     Ok(result)
+}
+
+async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &str, sig: Bytes, txn: Bytes) -> Result<(), Box<dyn std::error::Error>> {
+    let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("Invalid hex string");
+    let mut signer: [u8; 32] = [0; 32];
+    signer.copy_from_slice(&pub_key_bytes);
+
+    let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
+
+    let execute = contract.execute_message(signer, sig, txn);
+    let result = execute.send().await;
+
+    match result {
+        Ok(tx_future) => {
+            match tx_future.await {
+                Ok(tx) => {
+                    println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
+                    println!("-------------------------------------------------------\n");
+                },
+                Err(e) => {
+                    println!("TRANSACTION ERROR: {}", e);
+                }
+            }
+        },
+        Err(e) => {
+            println!("\nTRANSACTION FAILED | REVERT: {}\n", e);
+        }
+    }
+
+    Ok(())
 }
