@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = web3.eth_subscribe().subscribe_logs(filter).await?;
 
     while let Some(Ok(log)) = stream.next().await {
+        //Runs every transaction
         handle_log(&client, &dest_contract_address, &mut log_bytes, log).await?;
     }
 
@@ -61,8 +62,10 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
         let to = topic2.parse::<Bytes>()?;
         let amount = topic3.parse::<Bytes>()?;
 
-        // ^^ Call pure function to get transaction in bytes form
+        //Call pure function to get transaction in bytes form
         get_transaction_bytes(client, contract_addr, action_id, to, amount, log_bytes).await?;
+
+        //TODO: This needs to be run once every interval
         process_log(client, contract_addr, log_bytes).await?;
     } else {
         println!("No matches found");
@@ -73,16 +76,16 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
 }
 
 async fn process_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
-    // ^^ Call pure function to get final message in bytes form
+    //Call pure function to get final message in bytes form
     let msg = get_message_bytes(client, contract_addr, log_bytes).await?;
 
-    // ^^ Sign the message
+    //Sign the message
     let private_key_hex = env::var("PRIVATE_KEY")?;
     let public_key_hex = env::var("PUBLIC_KEY")?;
     let sig = ed25519::sign_message(private_key_hex.as_str(), &msg)?;
     println!("SIG: {}", sig);
 
-    // ^^ send to bridge node
+    //Send to destination contract
     execute_message(client, contract_addr, public_key_hex.as_str(), sig, msg).await?;
 
     Ok(())
