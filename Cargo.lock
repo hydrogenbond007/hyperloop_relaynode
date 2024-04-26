@@ -1681,6 +1681,7 @@ dependencies = [
  "blst",
  "dotenv",
  "ed25519-dalek",
+ "ethabi",
  "ethers",
  "ethers-solc",
  "hex",

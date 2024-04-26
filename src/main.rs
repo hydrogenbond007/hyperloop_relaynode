@@ -1,13 +1,16 @@
 use dotenv::dotenv;
 use std::env;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 use hex::FromHex;
 use web3::futures::StreamExt;
 use web3::types::{FilterBuilder, Log};
 use web3::transports::WebSocket;
 use ethers::prelude::*;
+use ethers::abi::Tokenizable;
 use ethers::providers::{Provider, Http};
+use ethabi::{decode, ParamType};
 mod ed25519;
 
 type Client = SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>;
@@ -43,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(Ok(log)) = stream.next().await {
         //Runs every transaction
+        println!("Received event: {:?}", log);
         handle_log(&client, &dest_contract_address, &mut log_bytes, log).await?;
     }
 
@@ -51,9 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<Bytes>, log: Log) -> Result<(), Box<dyn std::error::Error>>{
     let log_string = format!("{:?}", log);
-    let re = Regex::new(r"topics: \[([^,]+), ([^,]+), ([^,]+), ([^,]+)]").unwrap();
+    let re1 = Regex::new(r"topics: \[([^,]+), ([^,]+), ([^,]+), ([^,]+)]").unwrap();
 
-    if let Some(captures) = re.captures(log_string.as_str()) {
+    if let Some(captures) = re1.captures(log_string.as_str()) {
         let topic1 = captures.get(2).unwrap().as_str().trim();
         let topic2 = captures.get(3).unwrap().as_str().trim();
         let topic3 = captures.get(4).unwrap().as_str().trim();
@@ -61,6 +65,39 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
         let action_id = topic1.parse::<Bytes>()?;
         let to = topic2.parse::<Bytes>()?;
         let amount = topic3.parse::<Bytes>()?;
+
+        //Below code parses event data and calculates curr timestamp - block.timestamp
+        let data_re = Regex::new(r#"data: Bytes\("0x([^"]+?)"\)"#).unwrap();
+        let mut data_str: &str = "";
+
+        if let Some(captures) = data_re.captures(log_string.as_str()) {
+            data_str = captures.get(1).unwrap().as_str();
+        } else {
+            println!("No match found for data_re");
+        }
+
+        let action_id_bytes = Vec::from_hex(&topic1[2..]).unwrap();
+        let action_id_byte_array: &[u8] = &action_id_bytes.as_slice();
+        let action_id_val = decode(&[ParamType::Uint(256)], action_id_byte_array)?;
+
+        let event_bytes = Vec::from_hex(data_str).unwrap();
+        let event_byte_array: &[u8] = event_bytes.as_slice();
+        let decode_params = [ParamType::Uint(256), ParamType::Address, ParamType::Uint(256), ParamType::Uint(256), ParamType::Uint(256)];
+        let event_params = decode(&decode_params, event_byte_array)?;
+
+        let now = SystemTime::now();
+        let unix_timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_secs().into_token().into_uint();
+        let block_timestamp = event_params[0].clone().into_uint();
+
+        match block_timestamp{
+            Some(x) => {
+                match unix_timestamp {
+                    Some(y) => println!("(id: {:?}) Source Contract -> Bridge Node (in seconds): {:?}\n", action_id_val[0], y - x),
+                    None => println!("Invalid current timestamp"),
+                }
+            },
+            None => println!("Invalid block.timestamp"),
+        }
 
         //Call pure function to get transaction in bytes form
         get_transaction_bytes(client, contract_addr, action_id, to, amount, log_bytes).await?;
@@ -113,6 +150,8 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
 }
 
 async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &str, sig: Bytes, txn: Bytes) -> Result<(), Box<dyn std::error::Error>> {
+    let txn_send_timestamp = get_current_time();
+
     let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("Invalid hex string");
     let mut signer: [u8; 32] = [0; 32];
     signer.copy_from_slice(&pub_key_bytes);
@@ -127,6 +166,8 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
             match tx_future.await {
                 Ok(tx) => {
                     println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
+                    let txn_complete_timestamp = get_current_time();
+                    println!("[Transaction completion timestamp] - [Node txn send timestamp] (in ms): {}\n", txn_complete_timestamp - txn_send_timestamp);
                     println!("-------------------------------------------------------\n");
                 },
                 Err(e) => {
@@ -140,4 +181,12 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
     }
 
     Ok(())
+}
+
+fn get_current_time() -> u64{
+    let now = SystemTime::now();
+    let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+    let unix_timestamp_millis = duration_since_epoch.as_secs() * 1000 + u64::from(duration_since_epoch.subsec_millis());
+
+    unix_timestamp_millis
 }
