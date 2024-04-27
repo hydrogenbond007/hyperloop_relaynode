@@ -23,3 +23,7 @@ regex = "1.5"
 dotenv = "0.15"
 
 ethabi= "18.0.0"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
