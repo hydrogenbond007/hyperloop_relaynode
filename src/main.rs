@@ -34,6 +34,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // CMD line args 
     let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        eprintln!("Usage: {} <wallet>", args[0]);
+        std::process::exit(1);
+    }
+    
     let wallet: Wallet<k256::ecdsa::SigningKey> = args[1].parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
 
     let client = SignerMiddleware::new(provider.clone(), wallet.clone());
