@@ -9,6 +9,8 @@ use web3::transports::WebSocket;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Http};
 mod ed25519;
+use std::{thread, time};
+use std::time::SystemTime;
 
 type Client = SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>;
 
@@ -25,7 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dest_contract_address = env::var("DEST_CONTRACT_ADDR")?.parse::<Address>()?;
 
     let provider = Provider::<Http>::try_from(env::var("DEST_RPC_URL")?.as_str())?;
-    let wallet: Wallet<k256::ecdsa::SigningKey> = env::var("PRIVATE_KEY")?.parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
+    // let wallet: Wallet<k256::ecdsa::SigningKey> = env::var("PRIVATE_KEY")?.parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
+
+    // CMD line args 
+    let args: Vec<String> = env::args().collect();
+    let wallet: Wallet<k256::ecdsa::SigningKey> = args[1].parse::<Wallet<k256::ecdsa::SigningKey>>()?.with_chain_id(chain_id);
+
     let client = SignerMiddleware::new(provider.clone(), wallet.clone());
 
     let mut log_bytes: Vec<Bytes> = vec![];
@@ -54,6 +61,12 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
     let re = Regex::new(r"topics: \[([^,]+), ([^,]+), ([^,]+), ([^,]+)]").unwrap();
 
     if let Some(captures) = re.captures(log_string.as_str()) {
+        // @testing
+        match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => println!("EVENT DETECTED : {}", n.as_millis()),
+            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+        }
+            
         let topic1 = captures.get(2).unwrap().as_str().trim();
         let topic2 = captures.get(3).unwrap().as_str().trim();
         let topic3 = captures.get(4).unwrap().as_str().trim();
@@ -61,7 +74,7 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
         let action_id = topic1.parse::<Bytes>()?;
         let to = topic2.parse::<Bytes>()?;
         let amount = topic3.parse::<Bytes>()?;
-
+        println!("ACTION ID : {}", action_id);
         //Call pure function to get transaction in bytes form
         get_transaction_bytes(client, contract_addr, action_id, to, amount, log_bytes).await?;
 
@@ -80,19 +93,29 @@ async fn process_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<
     let msg = get_message_bytes(client, contract_addr, log_bytes).await?;
 
     //Sign the message
-    let private_key_hex = env::var("PRIVATE_KEY")?;
-    let public_key_hex = env::var("PUBLIC_KEY")?;
-    let sig = ed25519::sign_message(private_key_hex.as_str(), &msg)?;
-    println!("SIG: {}", sig);
+    // let private_key_hex = env::var("PRIVATE_KEY")?;
+    // let public_key_hex = env::var("PUBLIC_KEY")?;
 
-    //Send to destination contract
+    let args: Vec<String> = env::args().collect();
+    let private_key_hex = &args[1];
+    let public_key_hex = &args[2];
+    // println!("{public_key_hex}");
+
+    let sig = ed25519::sign_message(private_key_hex.as_str(), &msg)?;
+    // @testing
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(n) => println!("SIGNING EVENT DATA COMPLETED : {}", n.as_millis()),
+        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+    }
+    // println!("SIG: {}", sig);
+    
     execute_message(client, contract_addr, public_key_hex.as_str(), sig, msg).await?;
 
     Ok(())
 }
 
 async fn get_transaction_bytes(client: &Client, contract_addr: &H160, action_id: Bytes, to: Bytes, amount: Bytes, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("TOPICS: {}, {}, {}", action_id, to, amount);
+    // println!("TOPICS: {}, {}, {}", action_id, to, amount);
     
     let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
     let result = contract.get_transaction_bytes(action_id, to, amount).call().await?;
@@ -106,7 +129,7 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
     let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
     let result = contract.get_message_bytes(log_bytes.to_vec()).call().await?;
 
-    println!("MSG BYTES: {:?}", result);
+    // println!("MSG BYTES: {:?}", result);
     log_bytes.clear();
 
     Ok(result)
@@ -119,6 +142,14 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
 
     let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
 
+
+    //@testing
+    let args: Vec<String> = env::args().collect();
+    let timeout: u64 = args[3].parse().unwrap();
+    let seconds = time::Duration::from_secs(timeout);
+    thread::sleep(seconds);
+    
+    //Send to destination contract
     let execute = contract.execute_message(signer, sig, txn);
     let result = execute.send().await;
 
@@ -126,8 +157,13 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
         Ok(tx_future) => {
             match tx_future.await {
                 Ok(tx) => {
-                    println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
-                    println!("-------------------------------------------------------\n");
+                    // @testing
+                    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                        Ok(n) => println!("CALL TO DEST. COMPLETED : {}", n.as_millis()),
+                        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+                    }
+                    // println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
+                    println!("-------------------------------------------------------");
                 },
                 Err(e) => {
                     println!("TRANSACTION ERROR: {}", e);
