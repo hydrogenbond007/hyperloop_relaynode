@@ -98,7 +98,7 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
         if let Some(captures) = data_re.captures(log_string.as_str()) {
             data_str = captures.get(1).unwrap().as_str();
         } else {
-            println!("handle_log: no match found for data_re");
+            println!("handle_log: no match found for data_re\n");
         }
 
         let action_id_bytes = Vec::from_hex(&topic1[2..]).unwrap();
@@ -118,16 +118,16 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
             Some(x) => {
                 match unix_timestamp {
                     Some(y) => println!("* (id: {:?}) Source Contract -> Bridge Node (in seconds): {:?}\n", action_id_val[0], y - x),
-                    None => println!("handle_log: invalid current timestamp"),
+                    None => println!("handle_log: invalid current timestamp\n"),
                 }
             },
-            None => println!("handle_log: Invalid block.timestamp"),
+            None => println!("handle_log: Invalid block.timestamp\n"),
         }
 
         //Call pure function to get transaction in bytes form
         get_transaction_bytes(client, contract_addr, action_id, to, amount, log_bytes).await?;
     } else {
-        println!("handle_log: no matches found");
+        println!("handle_log: no matches found\n");
     }
     //println!("Received event: {:?}", log);
 
@@ -186,7 +186,7 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
 async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &str, sig: Bytes, txn: Bytes) -> Result<(), Box<dyn std::error::Error>> {
     let txn_send_timestamp = get_current_time();
 
-    let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("execute_message: Invalid hex string");
+    let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("execute_message: Invalid hex string\n");
     let mut signer: [u8; 32] = [0; 32];
     signer.copy_from_slice(&pub_key_bytes);
 
@@ -204,7 +204,7 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
                     println!("[Transaction completion timestamp] - [Node txn send timestamp] (in ms): {}\n", txn_complete_timestamp - txn_send_timestamp);
                 },
                 Err(e) => {
-                    println!("TRANSACTION ERROR: {}", e);
+                    println!("\nTRANSACTION ERROR: {}\n", e);
                 }
             }
         },
