@@ -11,7 +11,7 @@ use ethers::providers::{Provider, Http};
 mod ed25519;
 use std::{thread, time};
 use std::time::SystemTime;
-
+use tokio::*;
 type Client = SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>;
 
 abigen!(
@@ -147,7 +147,7 @@ async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &st
     let args: Vec<String> = env::args().collect();
     let timeout: u64 = args[3].parse().unwrap();
     let seconds = time::Duration::from_secs(timeout);
-    thread::sleep(seconds);
+    tokio::time::sleep(seconds);
     
     //Send to destination contract
     let execute = contract.execute_message(signer, sig, txn);
