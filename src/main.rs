@@ -16,15 +16,16 @@ mod ed25519;
 type Client = SignerMiddleware<Provider<Http>, Wallet<k256::ecdsa::SigningKey>>;
 
 abigen!(
-    BridgeRx,
-    "./abi/bridge_rx.json"
-);
-
-abigen!(
     BridgeTx,
     "./abi/bridge_tx.json"
 );
 
+abigen!(
+    BridgeRx,
+    "./abi/bridge_rx.json"
+);
+
+#[derive(Clone)]
 struct TxnMeta {
     from: Address,
     amount: U256
@@ -68,13 +69,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             log = stream.next() => {
                 if let Some(Ok(log)) = log {
-                    //println!("Received event: {:?}", log);
                     handle_log(&client, &dest_contract_address, log, &mut txn_meta, &mut log_bytes).await?;
                 }
             },
             _ = interval.tick() => {
                 if !log_bytes.is_empty() {
-                    process_log(&client, &source_contract_address.parse::<Address>()?, &dest_contract_address, &mut txn_meta, &mut log_bytes).await?;
+                    let txn_meta_clone = txn_meta.clone();
+                    let log_bytes_clone = log_bytes.clone();
+                    txn_meta.clear();
+                    log_bytes.clear();
+
+                    process_log(&client, &source_contract_address.parse::<Address>()?, &dest_contract_address, txn_meta_clone, log_bytes_clone).await?;
                 }
                 else {
                     println!("~ No Transactions Pending ~\n");
@@ -105,7 +110,7 @@ async fn handle_log(client: &Client, contract_addr: &H160, log: Log, txn_meta: &
         if let Some(captures) = data_re.captures(log_string.as_str()) {
             data_str = captures.get(1).unwrap().as_str();
         } else {
-            println!("handle_log: no match found for data_re");
+            println!("handle_log: no match found for data_re\n");
         }
 
         let action_id_bytes = Vec::from_hex(&topic1[2..]).unwrap();
@@ -119,16 +124,11 @@ async fn handle_log(client: &Client, contract_addr: &H160, log: Log, txn_meta: &
 
         let now = SystemTime::now();
         let unix_timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_secs().into_token().into_uint();
-        let block_timestamp = event_params[0].clone().into_uint();
+        let block_timestamp = event_params[0].clone().into_uint().expect("handle_log: Invalid block.timestamp\n");
 
-        match block_timestamp{
-            Some(x) => {
-                match unix_timestamp {
-                    Some(y) => println!("* (id: {:?}) Source Contract -> Bridge Node (in seconds): {:?}\n", action_id_val[0], y - x),
-                    None => println!("handle_log: invalid current timestamp"),
-                }
-            },
-            None => println!("handle_log: Invalid block.timestamp"),
+        match unix_timestamp {
+            Some(y) => println!("* (id: {:?}) Source Contract -> Bridge Node (in seconds): {:?}\n", action_id_val[0], y - block_timestamp),
+            None => println!("handle_log: invalid current timestamp\n"),
         }
 
         //Store in txn_meta
@@ -137,26 +137,26 @@ async fn handle_log(client: &Client, contract_addr: &H160, log: Log, txn_meta: &
         let amount_val = decode(&[ParamType::Uint(256)], amount_byte_array)?;
 
         let curr_txn_meta = TxnMeta {
-            from: event_params[1].clone().into_address().expect("handle_log: invalid address type"),
-            amount: amount_val[0].clone().into_uint().expect("handle_log: invalid uint type"),
+            from: event_params[1].clone().into_address().expect("handle_log: invalid address type\n"),
+            amount: amount_val[0].clone().into_uint().expect("handle_log: invalid uint type\n"),
         };
         txn_meta.push(curr_txn_meta);
 
         //Call pure function to get transaction in bytes form
         get_transaction_bytes(client, contract_addr, action_id, to, amount, log_bytes).await?;
     } else {
-        println!("handle_log: no matches found");
+        println!("handle_log: no matches found\n");
     }
     //println!("Received event: {:?}", log);
 
     Ok(())
 }
 
-async fn process_log(client: &Client, source_contract_addr: &H160, dest_contract_addr: &H160, txn_meta: &mut Vec<TxnMeta>, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_log(client: &Client, source_contract_addr: &H160, dest_contract_addr: &H160, mut txn_meta: Vec<TxnMeta>, mut log_bytes: Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
     println!("-----------------------BATCH CALL BEGIN-----------------------\n");
 
     //Call pure function to get final message in bytes form
-    let msg = get_message_bytes(client, dest_contract_addr, log_bytes).await?;
+    let msg = get_message_bytes(client, dest_contract_addr, &mut log_bytes).await?;
 
     //Sign the message
     // ^ let private_key_hex = env::var("PRIVATE_KEY")?;
@@ -176,27 +176,89 @@ async fn process_log(client: &Client, source_contract_addr: &H160, dest_contract
     thread::sleep(ten_millis);
 
     //Send to destination contract
-    let mut success = false;
-
     let timeout_duration = time::Duration::from_secs(args[4].parse().unwrap());
     let execute_message_future = execute_message(client, dest_contract_addr, public_key_hex.as_str(), sig, msg);
 
     match tokio::time::timeout(timeout_duration, execute_message_future).await {
         Ok(result) => {
-            success = result?;
+            if !result? {
+                revert_txns(client, source_contract_addr, &mut txn_meta).await?;
+            }
         }
         Err(_) => {
-            println!("~ BATCH TIME LIMIT EXCEEDED ~");
-            success = false;
+            println!("~ BATCH TIME LIMIT EXCEEDED ~\n");
+            revert_txns(client, source_contract_addr, &mut txn_meta).await?;
         }
     }
+    
+    println!("------------------------BATCH CALL END------------------------\n");
+    Ok(())
+}
 
+async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &str, sig: Bytes, txn: Bytes) -> Result< bool, Box<dyn std::error::Error>> {
+    let txn_send_timestamp = get_current_time();
 
-    if !success {
-        revert_txns(client, source_contract_addr, txn_meta).await?;
+    let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("execute_message: Invalid hex string");
+    let mut signer: [u8; 32] = [0; 32];
+    signer.copy_from_slice(&pub_key_bytes);
+
+    let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
+
+    let execute = contract.execute_message(signer, sig, txn);
+    let result = execute.send().await;
+
+    match result {
+        Ok(tx_future) => {
+            match tx_future.await {
+                Ok(tx) => {
+                    println!("\n- TRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
+                    let txn_complete_timestamp = get_current_time();
+                    println!("- [Transaction completion timestamp] - [Node txn send timestamp] (in ms): {}\n", txn_complete_timestamp - txn_send_timestamp);
+                    Ok(true)
+                },
+                Err(e) => {
+                    println!("\n- TRANSACTION ERROR: {}\n", e);
+                    Ok(false)
+                }
+            }
+        },
+        Err(e) => {
+            println!("\n- TRANSACTION FAILED | REVERT: {}\n", e);
+            Ok(false)
+        }
+    }
+}
+
+async fn revert_txns(client: &Client, contract_addr: &H160, txn_meta: &mut Vec<TxnMeta>) -> Result<(),Box<dyn std::error::Error>> {
+    println!("------------------------REVERT BEGIN-------------------------\n");
+    let ten_millis = time::Duration::from_millis(100);
+    
+    let contract = BridgeTx::new(contract_addr.clone(), Arc::new(client.clone()));
+    
+    for i in 0..txn_meta.len() {
+        let execute = contract.revert_txn(txn_meta[i].from, txn_meta[i].amount);
+        let result = execute.send().await;
+        
+        match result {
+            Ok(tx_future) => {
+                match tx_future.await {
+                    Ok(_tx) => {
+                        //println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&_tx)?);
+                        println!("(To: {:?}) REVERT SUCCESS\n", txn_meta[i].from);
+                    },
+                    Err(e) => {
+                        println!("REVERT TRANSACTION ERROR: {}\n", e);
+                    }
+                }
+            },
+            Err(e) => {
+                println!("REVERT TRANSACTION FAILED | REVERT: {}\n", e);
+            }
+        }
+        
+        thread::sleep(ten_millis);
     }
     
-    println!("\n------------------------BATCH CALL END------------------------\n");
     Ok(())
 }
 
@@ -216,43 +278,7 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
     let result = contract.get_message_bytes(log_bytes.to_vec()).call().await?;
 
     println!("- MSG BYTES: {:?}", result);
-    log_bytes.clear();
-
     Ok(result)
-}
-
-async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex: &str, sig: Bytes, txn: Bytes) -> Result<(bool), Box<dyn std::error::Error>> {
-    let txn_send_timestamp = get_current_time();
-
-    let pub_key_bytes = Vec::from_hex(pub_key_hex).expect("execute_message: Invalid hex string");
-    let mut signer: [u8; 32] = [0; 32];
-    signer.copy_from_slice(&pub_key_bytes);
-
-    let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
-
-    let execute = contract.execute_message(signer, sig, txn);
-    let result = execute.send().await;
-
-    match result {
-        Ok(tx_future) => {
-            match tx_future.await {
-                Ok(tx) => {
-                    println!("\n- TRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
-                    let txn_complete_timestamp = get_current_time();
-                    println!("- [Transaction completion timestamp] - [Node txn send timestamp] (in ms): {}", txn_complete_timestamp - txn_send_timestamp);
-                    Ok(true)
-                },
-                Err(e) => {
-                    println!("- TRANSACTION ERROR: {}", e);
-                    Ok(false)
-                }
-            }
-        },
-        Err(e) => {
-            println!("\n- TRANSACTION FAILED | REVERT: {}", e);
-            Ok(false)
-        }
-    }
 }
 
 fn get_current_time() -> u64{
@@ -261,38 +287,4 @@ fn get_current_time() -> u64{
     let unix_timestamp_millis = duration_since_epoch.as_secs() * 1000 + u64::from(duration_since_epoch.subsec_millis());
 
     unix_timestamp_millis
-}
-
-async fn revert_txns(client: &Client, contract_addr: &H160, txn_meta: &mut Vec<TxnMeta>) -> Result<(),Box<dyn std::error::Error>> {
-    println!("\n------------------------REVERT BEGIN-------------------------\n");
-    let ten_millis = time::Duration::from_millis(100);
-
-    let contract = BridgeTx::new(contract_addr.clone(), Arc::new(client.clone()));
-
-    for i in 0..txn_meta.len() {
-        let execute = contract.revert_txn(txn_meta[i].from, txn_meta[i].amount);
-        let result = execute.send().await;
-
-        match result {
-            Ok(tx_future) => {
-                match tx_future.await {
-                    Ok(tx) => {
-                        //println!("\nTRANSACTION RECEIPT: {}\n", serde_json::to_string(&tx)?);
-                        println!("(To: {:?}) REVERT SUCCESS", txn_meta[i].from);
-                    },
-                    Err(e) => {
-                        println!("REVERT TRANSACTION ERROR: {}", e);
-                    }
-                }
-            },
-            Err(e) => {
-                println!("\nREVERT TRANSACTION FAILED | REVERT: {}\n", e);
-            }
-        }
-        
-        thread::sleep(ten_millis);
-    }
-
-    txn_meta.clear();
-    Ok(())
 }
