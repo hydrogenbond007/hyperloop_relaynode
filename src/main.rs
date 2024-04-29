@@ -64,7 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             _ = interval.tick() => {
                 if !log_bytes.is_empty() {
-                    process_log(&client, &dest_contract_address, &mut log_bytes).await?;
+                    let log_bytes_clone = log_bytes.clone();
+                    log_bytes.clear();
+
+                    process_log(&client, &dest_contract_address, log_bytes_clone).await?;
                 }
                 else {
                     println!("~ No Transactions Pending ~\n");
@@ -131,11 +134,11 @@ async fn handle_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<B
     Ok(())
 }
 
-async fn process_log(client: &Client, contract_addr: &H160, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_log(client: &Client, contract_addr: &H160, mut log_bytes: Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
     println!("-----------------------BATCH CALL BEGIN-----------------------\n");
 
     //Call pure function to get final message in bytes form
-    let msg = get_message_bytes(client, contract_addr, log_bytes).await?;
+    let msg = get_message_bytes(client, contract_addr, &mut log_bytes).await?;
 
     //Sign the message
     // ^ let private_key_hex = env::var("PRIVATE_KEY")?;
@@ -177,8 +180,6 @@ async fn get_message_bytes(client: &Client, contract_addr: &H160, log_bytes: &mu
     let result = contract.get_message_bytes(log_bytes.to_vec()).call().await?;
 
     println!("- MSG BYTES: {:?}", result);
-    log_bytes.clear();
-
     Ok(result)
 }
 
