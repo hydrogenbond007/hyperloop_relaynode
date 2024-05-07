@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let batch_size_limit = 2;
 
     let mut log_bytes: Vec<Bytes> = vec![];
-    let mut revert_bytes: Vec<Bytes> = vec![];
 
     let dest_chain_id: u64 = env::var("DEST_CHAIN_ID")?.parse::<u64>().expect("main: invalid conversion to u64");
+    let dest_contract_string = env::var("DEST_CONTRACT_ADDR")?;
     let dest_contract_address = env::var("DEST_CONTRACT_ADDR")?.parse::<Address>()?;
     let dest_provider = Provider::<Http>::try_from(env::var("DEST_RPC_URL")?.as_str())?;
 
@@ -55,27 +55,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transport = WebSocket::new(&source_rpc_url).await?;
     let web3 = web3::Web3::new(transport);
 
-    let filter = FilterBuilder::default()
+    let filter_dest = FilterBuilder::default()
+        .address(vec![dest_contract_string.parse().unwrap()])
+        .build();
+    let filter_src = FilterBuilder::default()
         .address(vec![source_contract_string.parse().unwrap()])
         .build();
 
-    let mut stream = web3.eth_subscribe().subscribe_logs(filter).await?;
+    let mut stream_dest = web3.eth_subscribe().subscribe_logs(filter_dest).await?;
+    let mut stream_src = web3.eth_subscribe().subscribe_logs(filter_src).await?;
 
     let interval_dur = std::time::Duration::from_secs(batch_interval_time);
     let mut interval = tokio::time::interval(interval_dur);
 
     loop{
         tokio::select! {
-            log = stream.next() => {
+            log = stream_dest.next() => {
+                if let Some(Ok(log)) = log {
+                    println!("-- REVERT --\n");
+                    println!("Log: {:?}", log);
+                    let result = handle_revert(log).await?;
+
+                    match result {
+                        Some(x) => {
+                            let client_src_clone = client_src.clone();
+                            tokio::spawn(async move {
+                                let _ = process_log(&client_src_clone, &source_contract_address, &x, true).await;
+                            });
+                        },
+                        None => {}
+                    }
+                }
+            },
+            log = stream_src.next() => {
                 if let Some(Ok(log)) = log {
                     //println!("Log: {:?}", log);
-
                     let result = handle_log(log, &mut log_bytes).await?;
+
                     match result {
                         Some(x) => {
                             let client_dest_clone = client_dest.clone();
                             tokio::spawn(async move {
-                                let _ = process_log(&client_dest_clone, &dest_contract_address, &x).await;
+                                let _ = process_log(&client_dest_clone, &dest_contract_address, &x, false).await;
                             });
                         },
                         None => {}
@@ -91,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let client_dest_clone = client_dest.clone();
                         tokio::spawn(async move {
                             let msg = Bytes::from(encode(&[log_bytes_clone.into_token()]));
-                            let _ = process_log(&client_dest_clone, &dest_contract_address, &msg).await;
+                            let _ = process_log(&client_dest_clone, &dest_contract_address, &msg, false).await;
                         });
                     }
                 }
@@ -104,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let client_dest_clone = client_dest.clone();
                     tokio::spawn(async move {
                         let msg = Bytes::from(encode(&[log_bytes_clone.into_token()]));
-                        let _ = process_log(&client_dest_clone, &dest_contract_address, &msg).await;
+                        let _ = process_log(&client_dest_clone, &dest_contract_address, &msg, false).await;
                     });
                 }
                 else {
@@ -124,7 +145,7 @@ async fn handle_log(log: Log, log_bytes: &mut Vec<Bytes>) -> Result< Option<Byte
     if let Some(captures) = msg_re.captures(log_string.as_str()) {
         msg_str = captures.get(1).unwrap().as_str();
     } else {
-        println!("handle_log: no match found for data_re\n");
+        println!("handle_log: no match found for msg_re\n");
     }
 
     let msg_byte_vec = Vec::from_hex(&msg_str).unwrap();
@@ -172,35 +193,41 @@ async fn handle_log(log: Log, log_bytes: &mut Vec<Bytes>) -> Result< Option<Byte
     }
 }
 
-async fn process_reverts(client_src: &Client, source_contract_addr: &H160, revert_bytes: &Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("-------------------------REVERT BEGIN-------------------------\n");
+async fn handle_revert(log: Log) -> Result< Option<Bytes>,Box<dyn std::error::Error>> {
+    let log_string = format!("{:?}", log);
+    let log_re = Regex::new(r"topics: \[([^,]+), ([^,]+)]").unwrap();
+    let msg_re = Regex::new(r#"data: Bytes\("0x([^"]+?)"\)"#).unwrap();
 
-    //Call pure function to get final message in bytes form
-    let msg = Bytes::from(encode(&[revert_bytes.clone().into_token()]));
+    if let Some(captures) = log_re.captures(log_string.as_str()){
+        let topic1 = captures.get(2).unwrap().as_str().trim();
 
-    //Sign the message
-    let args: Vec<String> = env::args().collect();
-    let private_key_hex = &args[1];
-    let public_key_hex = &args[2];
-    println!("- SIGNER: {}", {public_key_hex});
+        let action_id_vec = Vec::from_hex(&topic1[2..]).unwrap();
+        let action_id = decode(&[ParamType::Uint(256)], action_id_vec.as_slice())?[0].clone();
 
-    let sig = crypt::sign_message(private_key_hex.as_str(), &msg)?;
-    println!("- SIG: {}", sig);
+        let mut msg = Bytes::default();
+        if let Some(captures) = msg_re.captures(log_string.as_str()) {
+            let msg_str = captures.get(1).unwrap().as_str();
+            let msg_vec = Vec::from_hex(msg_str).unwrap();
+            msg = Bytes::from(msg_vec);
+        } else {
+            println!("handle_log: no match found for msg_re\n");
+        }
 
-    //Send to destination contract
-    let timeout: u64 = args[3].parse().unwrap();
-    let ten_millis = time::Duration::from_millis(timeout);
-    thread::sleep(ten_millis);
-
-    //Send to destination contract
-    txn::execute_message( &client_src, source_contract_addr, public_key_hex.as_str(), sig, msg, true).await?;
-    
-    println!("--------------------------REVERT END--------------------------\n");
-    Ok(())
+        println!("* REVERT action_id: {:?}", action_id);
+        Ok(Some(msg))
+    }
+    else {
+        Ok(None)
+    }
 }
 
-async fn process_log(client_dest: &Client, dest_contract_addr: &H160, msg: &Bytes) -> Result< (), Box<dyn std::error::Error>> {
-    println!("-----------------------BATCH CALL BEGIN-----------------------\n");
+async fn process_log(client_dest: &Client, dest_contract_addr: &H160, msg: &Bytes, is_revert: bool) -> Result< (), Box<dyn std::error::Error>> {
+    if is_revert {
+        println!("----------------------- REVERT BEGIN -----------------------\n");
+    }
+    else{
+        println!("----------------------- BATCH CALL BEGIN -----------------------\n");
+    }
     println!("- MSG: {}", msg);
 
     //Sign the message
@@ -217,7 +244,7 @@ async fn process_log(client_dest: &Client, dest_contract_addr: &H160, msg: &Byte
     let ten_millis = time::Duration::from_millis(timeout);
     thread::sleep(ten_millis);
 
-    txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg.clone(), false).await?;
+    txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg.clone(), is_revert).await?;
     
     println!("------------------------BATCH CALL END------------------------\n");
     Ok(())
