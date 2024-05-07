@@ -9,7 +9,7 @@ use web3::transports::WebSocket;
 use ethers::prelude::*;
 use ethers::abi::Tokenizable;
 use ethers::providers::{Provider, Http};
-use ethabi::{decode, encode, ParamType, Token};
+use ethabi::{decode, encode, ParamType};
 
 mod crypt;
 mod txn;
@@ -68,13 +68,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             log = stream.next() => {
                 if let Some(Ok(log)) = log {
-                    println!("Log: {:?}", log);
+                    //println!("Log: {:?}", log);
+
                     let result = handle_log(log, &mut log_bytes).await?;
                     match result {
                         Some(x) => {
                             let client_dest_clone = client_dest.clone();
                             tokio::spawn(async move {
-                                let _ = process_batch(&client_dest_clone, &dest_contract_address, &x).await;
+                                let _ = process_log(&client_dest_clone, &dest_contract_address, &x).await;
                             });
                         },
                         None => {}
@@ -89,7 +90,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let client_dest_clone = client_dest.clone();
                         tokio::spawn(async move {
-                            let _ = process_log(&client_dest_clone, &dest_contract_address, log_bytes_clone).await;
+                            let msg = Bytes::from(encode(&[log_bytes_clone.into_token()]));
+                            let _ = process_log(&client_dest_clone, &dest_contract_address, &msg).await;
                         });
                     }
                 }
@@ -101,7 +103,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let client_dest_clone = client_dest.clone();
                     tokio::spawn(async move {
-                        let _ = process_log(&client_dest_clone, &dest_contract_address, log_bytes_clone).await;
+                        let msg = Bytes::from(encode(&[log_bytes_clone.into_token()]));
+                        let _ = process_log(&client_dest_clone, &dest_contract_address, &msg).await;
                     });
                 }
                 else {
@@ -169,38 +172,11 @@ async fn handle_log(log: Log, log_bytes: &mut Vec<Bytes>) -> Result< Option<Byte
     }
 }
 
-async fn process_log(client_dest: &Client, dest_contract_addr: &H160, log_bytes: Vec<Bytes>) -> Result< (), Box<dyn std::error::Error>> {
-    println!("-----------------------BATCH CALL BEGIN-----------------------\n");
-
-    //Call pure function to get final message in bytes form
-    let msg = txn::get_message_bytes( &client_dest, &dest_contract_addr, &log_bytes).await?;
-    println!("- MSG BYTES: {:?}", msg);
-
-    //Sign the message
-    let args: Vec<String> = env::args().collect();
-    let private_key_hex = &args[1];
-    let public_key_hex = &args[2];
-    println!("- SIGNER: {}", {public_key_hex});
-
-    let sig = crypt::sign_message(private_key_hex.as_str(), &msg)?;
-    println!("- SIG: {}", sig);
-
-    //Send to destination contract
-    let timeout: u64 = args[3].parse().unwrap();
-    let ten_millis = time::Duration::from_millis(timeout);
-    thread::sleep(ten_millis);
-
-    txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg, false).await?;
-    
-    println!("------------------------BATCH CALL END------------------------\n");
-    Ok(())
-}
-
-async fn process_reverts(client_src: &Client, client_dest: &Client, source_contract_addr: &H160, dest_contract_addr: &H160, revert_bytes: &Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_reverts(client_src: &Client, source_contract_addr: &H160, revert_bytes: &Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
     println!("-------------------------REVERT BEGIN-------------------------\n");
 
     //Call pure function to get final message in bytes form
-    let msg = txn::get_message_bytes( client_dest, dest_contract_addr, revert_bytes).await?;
+    let msg = Bytes::from(encode(&[revert_bytes.clone().into_token()]));
 
     //Sign the message
     let args: Vec<String> = env::args().collect();
@@ -223,9 +199,9 @@ async fn process_reverts(client_src: &Client, client_dest: &Client, source_contr
     Ok(())
 }
 
-async fn process_batch(client_dest: &Client, dest_contract_addr: &H160, msg: &Bytes) -> Result< (), Box<dyn std::error::Error>> {
+async fn process_log(client_dest: &Client, dest_contract_addr: &H160, msg: &Bytes) -> Result< (), Box<dyn std::error::Error>> {
     println!("-----------------------BATCH CALL BEGIN-----------------------\n");
-    println!("- BATCH MSG: {}", msg);
+    println!("- MSG: {}", msg);
 
     //Sign the message
     let args: Vec<String> = env::args().collect();

@@ -70,21 +70,6 @@ pub async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex:
     }
 }
 
-pub async fn get_transaction_bytes(client_dest: &Client, contract_addr: &H160, action_id: Bytes, to: Bytes, amount: Bytes, txn_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>> {
-    let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client_dest.clone()));
-    let result = contract.get_transaction_bytes(action_id, to, amount).call().await?;
-
-    txn_bytes.push(result);
-    Ok(())
-}
-
-pub async fn get_message_bytes(client_dest: &Client, contract_addr: &H160, log_bytes: &Vec<Bytes>) -> Result<Bytes, Box<dyn std::error::Error>> {
-    let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client_dest.clone()));
-    let result = contract.get_message_bytes(log_bytes.to_vec()).call().await?;
-  
-    Ok(result)
-}
-
 pub fn get_current_time() -> u64{
     let now = SystemTime::now();
     let duration_since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
