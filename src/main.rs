@@ -9,7 +9,7 @@ use web3::transports::WebSocket;
 use ethers::prelude::*;
 use ethers::abi::Tokenizable;
 use ethers::providers::{Provider, Http};
-use ethabi::{decode, encode, ParamType};
+use ethabi::{decode, encode, ParamType, Token};
 
 mod crypt;
 mod txn;
@@ -57,14 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let filter = FilterBuilder::default()
         .address(vec![source_contract_string.parse().unwrap()])
-        .topics(
-            Some(vec![<[u8; 32]>::from_hex(
-                "9853b992610853aa2f058d95d0a4868ffcd37470b93a5e6634619467e0d4228c"
-            ).unwrap().into()]),
-            None,
-            None,
-            None,
-        )
         .build();
 
     let mut stream = web3.eth_subscribe().subscribe_logs(filter).await?;
@@ -76,37 +68,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             log = stream.next() => {
                 if let Some(Ok(log)) = log {
-                    //println!("Log: {:?}", log);
-                    handle_log(&client_dest, &dest_contract_address, log, &mut revert_bytes, &mut log_bytes).await?;
+                    println!("Log: {:?}", log);
+                    let result = handle_log(log, &mut log_bytes).await?;
+                    match result {
+                        Some(x) => {
+                            let client_dest_clone = client_dest.clone();
+                            tokio::spawn(async move {
+                                let _ = process_batch(&client_dest_clone, &dest_contract_address, &x).await;
+                            });
+                        },
+                        None => {}
+                    }
 
                     if log_bytes.len() >= batch_size_limit {
-                        let revert_bytes_clone = revert_bytes.clone();
                         let log_bytes_clone = log_bytes.clone();
-                        revert_bytes.clear();
                         log_bytes.clear();
 
                         let interval_dur = std::time::Duration::from_secs(batch_interval_time);
                         interval = tokio::time::interval(interval_dur);
 
-                        let client_src_clone = client_src.clone();
                         let client_dest_clone = client_dest.clone();
                         tokio::spawn(async move {
-                            let _ = process_log( &client_src_clone, &client_dest_clone, &source_contract_address, &dest_contract_address, log_bytes_clone, revert_bytes_clone).await;
+                            let _ = process_log(&client_dest_clone, &dest_contract_address, log_bytes_clone).await;
                         });
                     }
                 }
             },
             _ = interval.tick() => {
                 if !log_bytes.is_empty() {
-                    let revert_bytes_clone = revert_bytes.clone();
                     let log_bytes_clone = log_bytes.clone();
-                    revert_bytes.clear();
                     log_bytes.clear();
 
-                    let client_src_clone = client_src.clone();
                     let client_dest_clone = client_dest.clone();
                     tokio::spawn(async move {
-                        let _ = process_log( &client_src_clone, &client_dest_clone, &source_contract_address, &dest_contract_address, log_bytes_clone, revert_bytes_clone).await;
+                        let _ = process_log(&client_dest_clone, &dest_contract_address, log_bytes_clone).await;
                     });
                 }
                 else {
@@ -117,63 +112,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn handle_log(client_dest: &Client, contract_addr: &H160, log: Log, revert_bytes: &mut Vec<Bytes>, log_bytes: &mut Vec<Bytes>) -> Result<(), Box<dyn std::error::Error>>{
+async fn handle_log(log: Log, log_bytes: &mut Vec<Bytes>) -> Result< Option<Bytes>, Box<dyn std::error::Error>>{
     let log_string = format!("{:?}", log);
-    let re1 = Regex::new(r"topics: \[([^,]+), ([^,]+), ([^,]+), ([^,]+)]").unwrap();
+    let log_re = Regex::new(r"topics: \[([^,]+), ([^,]+), ([^,]+), ([^,]+)]").unwrap();
+    let msg_re = Regex::new(r#"data: Bytes\("0x([^"]+?)"\)"#).unwrap();
+    let mut msg_str: &str = "";
 
-    if let Some(captures) = re1.captures(log_string.as_str()) {
+    if let Some(captures) = msg_re.captures(log_string.as_str()) {
+        msg_str = captures.get(1).unwrap().as_str();
+    } else {
+        println!("handle_log: no match found for data_re\n");
+    }
+
+    let msg_byte_vec = Vec::from_hex(&msg_str).unwrap();
+    let msg_byte_arr = msg_byte_vec.as_slice();
+    let msg_decode_params = [ParamType::Array(Box::new(ParamType::Bytes))];
+    let msg = decode(&msg_decode_params, &msg_byte_arr)?;
+    let txn_array = msg[0].clone().into_array().expect("handle_log: invalid array format");
+
+    if let Some(captures) = log_re.captures(log_string.as_str()){
         let topic1 = captures.get(2).unwrap().as_str().trim();
         let topic2 = captures.get(3).unwrap().as_str().trim();
         let topic3 = captures.get(4).unwrap().as_str().trim();
 
-        let action_id = topic1.parse::<Bytes>()?;
-        let to = topic2.parse::<Bytes>()?;
-        let amount = topic3.parse::<Bytes>()?;
+        let action_id_vec = Vec::from_hex(&topic1[2..]).unwrap();
+        let from_vec = Vec::from_hex(&topic2[2..]).unwrap();
+        let timestamp_vec = Vec::from_hex(&topic3[2..]).unwrap();
 
-        //Below code parses event data and calculates curr timestamp - block.timestamp
-
-        let data_re = Regex::new(r#"data: Bytes\("0x([^"]+?)"\)"#).unwrap();
-        let mut data_str: &str = "";
-
-        if let Some(captures) = data_re.captures(log_string.as_str()) {
-            data_str = captures.get(1).unwrap().as_str();
-        } else {
-            println!("handle_log: no match found for data_re\n");
-        }
-
-        let action_id_bytes = Vec::from_hex(&topic1[2..]).unwrap();
-        let action_id_byte_array: &[u8] = &action_id_bytes.as_slice();
-        let action_id_val = decode(&[ParamType::Uint(256)], action_id_byte_array)?;
-
-        let event_bytes = Vec::from_hex(data_str).unwrap();
-        let event_byte_array: &[u8] = event_bytes.as_slice();
-        let decode_params = [ParamType::Uint(256), ParamType::Address, ParamType::Uint(256), ParamType::Uint(256), ParamType::Uint(256)];
-        let event_params = decode(&decode_params, event_byte_array)?;
+        let action_id = decode(&[ParamType::Uint(256)], action_id_vec.as_slice())?[0].clone();
+        let from = decode(&[ParamType::Address], from_vec.as_slice())?[0].clone();
+        let timestamp = decode(&[ParamType::Uint(256)], timestamp_vec.as_slice())?[0].clone();
 
         let now = SystemTime::now();
-        let unix_timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_secs().into_token().into_uint();
-        let block_timestamp = event_params[0].clone().into_uint().expect("handle_log: Invalid block.timestamp\n");
+        let unix_timestamp = now.duration_since(UNIX_EPOCH).unwrap().as_secs().into_token().into_uint().expect("handle_log: invalid unix timestamp");
+        let block_timestamp = timestamp.clone().into_uint().expect("handle_log: invalid block.timestamp\n");
+        let time_delay = unix_timestamp - block_timestamp;
 
-        match unix_timestamp {
-            Some(y) => println!("* (id: {:?}) Source Contract -> Bridge Node (in seconds): {:?}\n", action_id_val[0], y - block_timestamp),
-            None => println!("handle_log: invalid current timestamp\n"),
+        if txn_array.len() == 1 {
+            println!("* TXN action_id: {:?} | from: {:?} | source -> node duration (seconds): {:?}", action_id, from, time_delay);
         }
-
-        let from_vec = encode(&[event_params[1].clone()]);
-        let from_bytes = Bytes::from(from_vec);
-        println!("- TOPICS: {}, {}, {}\n", action_id, to, amount);
-
-        //Call pure function to get transaction in bytes form
-        txn::get_transaction_bytes(client_dest, contract_addr, action_id.clone(), to.clone(), amount.clone(), log_bytes).await?;
-        txn::get_transaction_bytes(client_dest, contract_addr, action_id.clone(), from_bytes.clone(), amount.clone(), revert_bytes).await?;
-    } else {
-        println!("handle_log: no matches found\n");
+        else {
+            println!("* BATCH action_id: {:?} | from: {:?} | source -> node duration (seconds): {:?}", action_id, from, time_delay);
+        }
     }
 
-    Ok(())
+    if txn_array.len() == 1 {
+        let txn_vec = txn_array[0].clone().into_bytes().expect("handle_log: invalid bytes format");
+        let txn_bytes = Bytes::from(txn_vec);
+
+        log_bytes.push(txn_bytes);
+        Ok(None)
+    }
+    else {
+        let msg_bytes = Bytes::from(msg_byte_vec);
+        Ok(Some(msg_bytes))
+    }
 }
 
-async fn process_log(client_src: &Client, client_dest: &Client, source_contract_addr: &H160, dest_contract_addr: &H160, log_bytes: Vec<Bytes>, revert_bytes: Vec<Bytes>) -> Result< (), Box<dyn std::error::Error>> {
+async fn process_log(client_dest: &Client, dest_contract_addr: &H160, log_bytes: Vec<Bytes>) -> Result< (), Box<dyn std::error::Error>> {
     println!("-----------------------BATCH CALL BEGIN-----------------------\n");
 
     //Call pure function to get final message in bytes form
@@ -194,21 +190,7 @@ async fn process_log(client_src: &Client, client_dest: &Client, source_contract_
     let ten_millis = time::Duration::from_millis(timeout);
     thread::sleep(ten_millis);
 
-    //Send to destination contract
-    let timeout_duration = time::Duration::from_secs(args[4].parse().unwrap());
-    let execute_message_future = txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg, false);
-
-    let success = match tokio::time::timeout(timeout_duration, execute_message_future).await {
-        Ok(result) => result?,
-        Err(_) => {
-            println!("~ BATCH TIME LIMIT EXCEEDED ~\n");
-            false
-        }
-    };
-
-    if !success {
-        process_reverts( &client_src, &client_dest, &source_contract_addr, &dest_contract_addr, &revert_bytes).await?;
-    }
+    txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg, false).await?;
     
     println!("------------------------BATCH CALL END------------------------\n");
     Ok(())
@@ -238,5 +220,29 @@ async fn process_reverts(client_src: &Client, client_dest: &Client, source_contr
     txn::execute_message( &client_src, source_contract_addr, public_key_hex.as_str(), sig, msg, true).await?;
     
     println!("--------------------------REVERT END--------------------------\n");
+    Ok(())
+}
+
+async fn process_batch(client_dest: &Client, dest_contract_addr: &H160, msg: &Bytes) -> Result< (), Box<dyn std::error::Error>> {
+    println!("-----------------------BATCH CALL BEGIN-----------------------\n");
+    println!("- BATCH MSG: {}", msg);
+
+    //Sign the message
+    let args: Vec<String> = env::args().collect();
+    let private_key_hex = &args[1];
+    let public_key_hex = &args[2];
+    println!("- SIGNER: {}", {public_key_hex});
+
+    let sig = crypt::sign_message(private_key_hex.as_str(), &msg)?;
+    println!("- SIG: {}", sig);
+
+    //Send to destination contract
+    let timeout: u64 = args[3].parse().unwrap();
+    let ten_millis = time::Duration::from_millis(timeout);
+    thread::sleep(ten_millis);
+
+    txn::execute_message( &client_dest, &dest_contract_addr, public_key_hex.as_str(), sig, msg.clone(), false).await?;
+    
+    println!("------------------------BATCH CALL END------------------------\n");
     Ok(())
 }
