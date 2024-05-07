@@ -57,9 +57,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let filter_dest = FilterBuilder::default()
         .address(vec![dest_contract_string.parse().unwrap()])
+        .topics(
+            Some(vec![<[u8; 32]>::from_hex(
+                "3a3eef2a382114586d78a3311f047e182e9b14d34eb53b294fd013fcd8dfe931"
+            ).unwrap().into()]),
+            None,
+            None,
+            None,
+        )
         .build();
     let filter_src = FilterBuilder::default()
         .address(vec![source_contract_string.parse().unwrap()])
+        .topics(
+            Some(vec![<[u8; 32]>::from_hex(
+                "52cf04003d86066cd77e638acb2e47227554963812ac970787c2c5a161acf8a1"
+            ).unwrap().into()]),
+            None,
+            None,
+            None,
+        )
         .build();
 
     let mut stream_dest = web3.eth_subscribe().subscribe_logs(filter_dest).await?;
@@ -72,8 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             log = stream_dest.next() => {
                 if let Some(Ok(log)) = log {
-                    println!("-- REVERT --\n");
-                    println!("Log: {:?}", log);
+                    //println!("Log: {:?}", log);
                     let result = handle_revert(log).await?;
 
                     match result {

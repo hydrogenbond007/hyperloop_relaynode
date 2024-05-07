@@ -27,7 +27,7 @@ pub async fn execute_message(client: &Client, contract_addr: &H160, pub_key_hex:
     let execute;
     if is_revert {
         let contract = BridgeTx::new(contract_addr.clone(), Arc::new(client.clone()));
-        execute = contract.execute_message(signer, sig, txn);
+        execute = contract.revert_transaction(signer, sig, txn);
     }
     else {
         let contract = BridgeRx::new(contract_addr.clone(), Arc::new(client.clone()));
